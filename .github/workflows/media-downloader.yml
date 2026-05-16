@@ -52,11 +52,16 @@ jobs:
           python3 -m pip install --upgrade yt-dlp
 
       - name: Write optional cookies
-        if: ${{ secrets.YTDLP_COOKIES_TXT != '' }}
+        env:
+          COOKIES_TXT: ${{ secrets.YTDLP_COOKIES_TXT }}
         run: |
-          printf '%s' "${{ secrets.YTDLP_COOKIES_TXT }}" > cookies.txt
-          chmod 600 cookies.txt
-
+          if [ -n "$COOKIES_TXT" ]; then
+            printf '%s' "$COOKIES_TXT" > cookies.txt
+            chmod 600 cookies.txt
+            echo "Cookies file prepared."
+          else
+            echo "No cookies secret found. Continuing without cookies."
+          fi
       - name: Download media
         run: |
           python3 scripts/download.py \

@@ -1,178 +1,136 @@
 #!/usr/bin/env python3
-
 import argparse
 import shlex
 import subprocess
 import sys
 from pathlib import Path
 
-BLOCKED_ARGS = {
-    "--exec",
-    "--use-postprocessor",
-    "--postprocessor-args",
-    "--ppa",
-    "--config-location",
-    "--batch-file",
-    "-a",
-}
 
-MODE_CONFIG = {
-    "best-mp4": {
-        "format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/best",
-        "merge_output_format": "mp4",
-    },
-    "1080p-mp4": {
-        "format": "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/best[height<=1080]",
-        "merge_output_format": "mp4",
-    },
-    "720p-mp4": {
-        "format": "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/best[height<=720]",
-        "merge_output_format": "mp4",
-    },
-    "audio-mp3": {
-        "extract_audio": True,
-        "audio_format": "mp3",
-        "audio_quality": "0",
-        "format": "bestaudio/best",
-    },
-    "audio-m4a": {
-        "extract_audio": True,
-        "audio_format": "m4a",
-        "audio_quality": "0",
-        "format": "bestaudio/best",
-    },
-}
-
-OUTPUT_TEMPLATE = "downloads/%(title).180B [%(id)s].%(ext)s"
-
-
-def parse_bool(value: str) -> bool:
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
-def validate_extra_args(extra_args_raw: str) -> list[str]:
-    if not extra_args_raw:
-        return []
-
-    try:
-        args = shlex.split(extra_args_raw)
-    except ValueError as exc:
-        raise SystemExit(f"Invalid extra_ytdlp_args: {exc}") from None
-
-    for arg in args:
-        normalized = arg.lower()
-        if normalized in BLOCKED_ARGS:
-            raise SystemExit(f"Blocked yt-dlp argument detected: {arg}")
-        for blocked in BLOCKED_ARGS:
-            if blocked.startswith("--") and normalized.startswith(blocked + "="):
-                raise SystemExit(f"Blocked yt-dlp argument detected: {arg}")
-    return args
-
-
-def build_command(args: argparse.Namespace) -> list[str]:
-    config = MODE_CONFIG[args.mode]
-    command = [
-        "yt-dlp",
-        "--output",
-        OUTPUT_TEMPLATE,
-        "--restrict-filenames",
-        "--windows-filenames",
-        "--continue",
-        "--retries",
-        "10",
-        "--fragment-retries",
-        "10",
-        "--socket-timeout",
-        "20",
-        "--concurrent-fragments",
-        "16",
-        "--downloader",
-        "aria2c",
-        "--downloader-args",
-        "aria2c:-x 16 -s 16 -k 1M --file-allocation=none --summary-interval=0",
-        "--temp-dir",
-        "temp",
-    ]
-
-    if args.playlist:
-        command.append("--yes-playlist")
-    else:
-        command.append("--no-playlist")
-
-    if args.subtitles:
-        command.extend([
-            "--write-subs",
-            "--write-auto-subs",
-            "--sub-langs",
-            "en.*,fa.*,all",
-            "--convert-subs",
-            "srt",
-        ])
-
-    if config.get("merge_output_format"):
-        command.extend(["--format", config["format"], "--merge-output-format", config["merge_output_format"]])
-    else:
-        command.extend(["--format", config["format"]])
-
-    if config.get("extract_audio"):
-        command.extend([
-            "--extract-audio",
-            "--audio-format",
-            config["audio_format"],
-            "--audio-quality",
-            config["audio_quality"],
-        ])
-
-    if Path("cookies.txt").is_file():
-        command.extend(["--cookies", "cookies.txt"])
-
-    command.extend(args.extra_args)
-    command.append(args.url)
-    return command
+def to_bool(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Authorized media downloader wrapper for yt-dlp")
-    parser.add_argument("--url", required=True, help="Media URL to download")
-    parser.add_argument(
-        "--mode",
-        required=True,
-        choices=list(MODE_CONFIG.keys()),
-        help="Download mode"
-    )
-    parser.add_argument(
-        "--playlist",
-        required=True,
-        type=parse_bool,
-        help="Enable playlist download",
-    )
-    parser.add_argument(
-        "--subtitles",
-        required=True,
-        type=parse_bool,
-        help="Enable subtitle download",
-    )
-    parser.add_argument(
-        "--extra-args",
-        default="",
-        help="Extra yt-dlp arguments to pass after validation",
-    )
-    parsed = parser.parse_args()
+    parser = argparse.ArgumentParser(description="Authorized fast media downloader")
+    parser.add_argument("--url", required=True)
+    parser.add_argument("--mode", required=True)
+    parser.add_argument("--playlist", default="false")
+    parser.add_argument("--subtitles", default="false")
+    parser.add_argument("--extra-args", default="")
+    args = parser.parse_args()
 
-    parsed.extra_args = validate_extra_args(parsed.extra_args)
+    url = args.url.strip()
+    mode = args.mode.strip()
+    playlist = to_bool(args.playlist)
+    subtitles = to_bool(args.subtitles)
+    extra_args = args.extra_args.strip()
 
-    Path("downloads").mkdir(parents=True, exist_ok=True)
-    Path("temp").mkdir(parents=True, exist_ok=True)
+    if not url:
+        print("ERROR: URL is empty.")
+        return 1
 
-    command = build_command(parsed)
+    Path("downloads").mkdir(exist_ok=True)
+    Path("temp").mkdir(exist_ok=True)
+
+    cmd = [
+        "yt-dlp",
+        url,
+
+        "--ignore-errors",
+        "--no-overwrites",
+        "--continue",
+        "--retries", "10",
+        "--fragment-retries", "10",
+        "--socket-timeout", "20",
+
+        "--concurrent-fragments", "16",
+        "--downloader", "aria2c",
+        "--downloader-args", "aria2c:-x 16 -s 16 -k 1M --file-allocation=none --summary-interval=0",
+
+        "--paths", "home:downloads",
+        "--paths", "temp:temp",
+        "-o", "%(title).180B [%(id)s].%(ext)s",
+        "--restrict-filenames",
+        "--windows-filenames",
+
+        "--write-info-json",
+        "--write-thumbnail",
+        "--embed-metadata",
+    ]
+
+    if Path("cookies.txt").exists():
+        cmd += ["--cookies", "cookies.txt"]
+
+    if playlist:
+        cmd += ["--yes-playlist"]
+    else:
+        cmd += ["--no-playlist"]
+
+    if subtitles:
+        cmd += [
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs", "en.*,fa.*,all",
+            "--convert-subs", "srt",
+        ]
+
+    if mode == "best-mp4":
+        cmd += [
+            "-f", "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/best",
+            "--merge-output-format", "mp4",
+        ]
+    elif mode == "1080p-mp4":
+        cmd += [
+            "-f", "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/best[height<=1080]",
+            "--merge-output-format", "mp4",
+        ]
+    elif mode == "720p-mp4":
+        cmd += [
+            "-f", "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[height<=720][ext=mp4]/best[height<=720]",
+            "--merge-output-format", "mp4",
+        ]
+    elif mode == "audio-mp3":
+        cmd += [
+            "-x",
+            "--audio-format", "mp3",
+            "--audio-quality", "0",
+        ]
+    elif mode == "audio-m4a":
+        cmd += [
+            "-f", "ba[ext=m4a]/ba",
+            "-x",
+            "--audio-format", "m4a",
+        ]
+    else:
+        print(f"ERROR: Unknown mode: {mode}")
+        return 1
+
+    blocked = {
+        "--exec",
+        "--use-postprocessor",
+        "--postprocessor-args",
+        "--ppa",
+        "--config-location",
+        "--batch-file",
+        "-a",
+    }
+
+    if extra_args:
+        parts = shlex.split(extra_args)
+        for part in parts:
+            if part in blocked or any(part.startswith(b + "=") for b in blocked):
+                print(f"ERROR: Blocked unsafe yt-dlp argument: {part}")
+                return 1
+        cmd += parts
 
     print("Running yt-dlp with secure configuration...")
-    result = subprocess.run(command)
-    if result.returncode != 0:
-        raise SystemExit(result.returncode)
+    print(f"Mode: {mode}")
+    print(f"Playlist: {playlist}")
+    print(f"Subtitles: {subtitles}")
 
-    return 0
+    result = subprocess.run(cmd)
+    return result.returncode
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())
